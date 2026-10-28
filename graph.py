@@ -13,6 +13,8 @@ class Edge:
     length: float       # km
     road: str           # highway / arterial / local
     center_dist: float  # km from edge midpoint to city centre
+    base_idx: int | None = None
+    fraction: float = 1.0
 
 
 class Graph:
@@ -26,12 +28,12 @@ class Graph:
         self.pos[n] = (x, y)
         self.adj[n] = []
 
-    def add_directed(self, u, v, length, road):
+    def add_directed(self, u, v, length, road, base_idx=None, fraction=1.0):
         """One directed edge (used for one-way streets from OpenStreetMap)."""
         mx = (self.pos[u][0] + self.pos[v][0]) / 2
         my = (self.pos[u][1] + self.pos[v][1]) / 2
         cd = math.hypot(mx - self.center[0], my - self.center[1])
-        e = Edge(len(self.edges), u, v, length, road, cd)
+        e = Edge(len(self.edges), u, v, length, road, cd, base_idx, fraction)
         self.edges.append(e)
         self.adj[u].append(e)
 
