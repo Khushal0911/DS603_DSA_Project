@@ -13,7 +13,9 @@ st.set_page_config(page_title="Ahmedabad Route Planner", layout="wide")
 PRESETS = {
     "Kalupur Railway Station": (23.0268, 72.6013),
     "Lal Darwaja": (23.0240, 72.5812),
-    "Law Garden": (23.0258, 72.5547),
+    # Centre of the Law Garden park (the previous longitude pointed west of
+    # the landmark, near Panchvati Cross Roads).
+    "Law Garden": (23.0264, 72.5608),
     "Sabarmati Ashram": (23.0607, 72.5800),
     "Gujarat University": (23.0343, 72.5461),
     "Vastrapur Lake": (23.0372, 72.5276),
@@ -50,24 +52,10 @@ def get_table(source, hour):
     return tm.predict_table(model, g, hour)
 
 
-def search_place(query, source):
-    query = query.strip()
-    if source.startswith("Real"):
-        import osmnx as ox
-        return ox.geocode(query)
-    for name, coordinates in PRESETS.items():
-        if query.casefold() == name.casefold():
-            return coordinates
-    raise ValueError("Online place search requires the real OpenStreetMap network.")
-
-
 ss = st.session_state
-for endpoint in ("start", "end"):
-    if ss.pop(f"clear_preset_{endpoint}", False):
-        ss[f"{endpoint}_preset"] = "-"
 
 st.title("Ahmedabad route planner: shortest distance vs predicted fastest")
-st.caption("Choose places by searching, selecting a landmark, or clicking the map. Routes snap to the nearest mapped road.")
+st.caption("Choose a landmark or click the map. The selected pin stays at the chosen location; routing uses a separate nearest-road point.")
 with st.sidebar:
     st.header("Route settings")
     source = st.radio("Road network", ["Real Ahmedabad (OpenStreetMap)", "Offline demo network"], key="source")
@@ -76,31 +64,6 @@ with st.sidebar:
     mode = st.radio("Next map click sets", ["Start", "Destination"], horizontal=True)
     a = st.selectbox("Search start landmark", ["-"] + list(PRESETS), key="start_preset")
     b = st.selectbox("Search destination landmark", ["-"] + list(PRESETS), key="end_preset")
-    with st.form("place_search"):
-        query = st.text_input("Search a place", placeholder="e.g. Sabarmati Ashram")
-        search_target = st.radio("Use result as", ["Start", "Destination"], horizontal=True)
-        submitted = st.form_submit_button("Find place")
-    if submitted:
-        if not query.strip():
-            st.error("Enter a place name to search.")
-        else:
-            succeeded = False
-            try:
-                coordinates = search_place(query, source)
-                lat, lon = map(float, coordinates)
-                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                    raise ValueError("The place search returned invalid coordinates.")
-                ss = st.session_state
-                key = "start" if search_target == "Start" else "end"
-                ss[key] = (lat, lon)
-                ss[f"clear_preset_{key}"] = True
-                ss.pop(f"preset_{key}", None)
-                succeeded = True
-            except Exception as ex:
-                st.error(f"Place search failed ({type(ex).__name__}): {ex}")
-            if succeeded:
-                st.rerun()
-
 g, model, metrics, segment_nodes, segment_xy, note = get_city(source)
 if note:
     st.warning(note)
@@ -182,7 +145,7 @@ with right:
         elif route_attempted:
             st.info("No route could be found between these locations on the loaded road network.")
         else:
-            st.info("Search for a place, choose a landmark, or click the map to set both endpoints.")
+            st.info("Choose a start and destination landmark, or click the map to set both endpoints.")
     else:
         d, t = result["dist"], result["time"]
         saved = 100 * (d["min"] - t["min"]) / d["min"] if d["min"] else 0
