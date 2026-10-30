@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartRoute | Ahmedabad</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">↗</span><span>SmartRoute</span><small>AHMEDABAD</small></div>
+  <div class="top-status"><span class="status-dot"></span><span id="networkStatus">Map ready · road data loads on first route</span></div>
+</header>
+<main class="layout">
+  <aside class="panel">
+    <div class="panel-heading"><div><p class="eyebrow">PLAN YOUR JOURNEY</p><h1>Where to?</h1></div><span class="round-icon">⌁</span></div>
+    <label for="startSearch">Starting point</label>
+    <div class="search-wrap"><span class="pin green"></span><input id="startSearch" autocomplete="off" value="Sabarmati Ashram" placeholder="Search a place in Ahmedabad"><div id="startResults" class="suggestions"></div></div>
+    <label for="endSearch">Destination</label>
+    <div class="search-wrap"><span class="pin red"></span><input id="endSearch" autocomplete="off" value="Kankaria Lake" placeholder="Search destination"><div id="endResults" class="suggestions"></div></div>
+    <div class="two-col">
+      <div><label for="algorithm">Algorithm</label><select id="algorithm"><option value="astar">A* Search</option><option value="dijkstra">Dijkstra</option></select></div>
+      <div><label for="mode">Optimize for</label><select id="mode"><option value="distance">Shortest distance</option><option value="time">Estimated time</option></select></div>
+    </div>
+    <div class="two-col">
+      <div><label for="hour">Departure time</label><select id="hour">
+        <option value="6">06:00</option><option value="8">08:00</option><option value="9" selected>09:00</option><option value="12">12:00</option><option value="17">17:00</option><option value="19">19:00</option><option value="22">22:00</option>
+      </select></div>
+      <div><label for="day">Day</label><select id="day"><option value="0">Weekday</option><option value="1">Weekend</option></select></div>
+    </div>
+    <button id="routeButton" class="primary">Find best route <span>→</span></button>
+    <button id="compareButton" class="secondary">Compare distance vs time</button>
+    <div id="message" class="message">Search for Ahmedabad locations, then calculate a route.</div>
+    <section id="routeSummary" class="route-summary hidden">
+      <div class="summary-top"><span class="eyebrow">YOUR ROUTE</span><span id="algoTag" class="tag">A*</span></div>
+      <div class="metrics"><div><strong id="distance">—</strong><small>Distance</small></div><div><strong id="duration">—</strong><small>Est. time</small></div></div>
+      <p id="routeNote" class="route-note"></p>
+    </section>
+    <div class="attribution-note">Map © OpenStreetMap contributors. Route is calculated by our own Python algorithms.</div>
+  </aside>
+  <section class="map-shell">
+    <div id="map"></div>
+    <div class="map-legend"><span><i class="legend-line"></i> Selected route</span><span><i class="legend-dot"></i> Selected place</span></div>
+    <div id="mapLoading" class="map-loading hidden"><div class="spinner"></div><span>Loading Ahmedabad road network…</span><small>First download may take a few minutes.</small></div>
+  </section>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
