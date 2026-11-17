@@ -1,0 +1,35 @@
+{
+  "checks": [
+    {
+      "algorithm": "astar",
+      "mode": "distance",
+      "distance_m": 6635.393100101696,
+      "estimated_seconds": 2052.247796275745,
+      "path_and_geometry_match_baseline": true
+    },
+    {
+      "algorithm": "astar",
+      "mode": "time",
+      "distance_m": 6733.515918185918,
+      "estimated_seconds": 1555.9262862161333,
+      "path_and_geometry_match_baseline": true
+    },
+    {
+      "algorithm": "dijkstra",
+      "mode": "distance",
+      "distance_m": 6635.393100101696,
+      "estimated_seconds": 2052.247796275745,
+      "path_and_geometry_match_baseline": true
+    },
+    {
+      "algorithm": "dijkstra",
+      "mode": "time",
+      "distance_m": 6733.515918185918,
+      "estimated_seconds": 1555.9262862161333,
+      "path_and_geometry_match_baseline": true
+    }
+  ],
+  "max_rf_difference_seconds": 1.1368683772161603e-13,
+  "astar_and_dijkstra_optimal_costs_agree": true,
+  "all_cached_requests_used_zero_predictions": true
+}

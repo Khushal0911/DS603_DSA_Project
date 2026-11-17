@@ -1,5 +1,11 @@
 
 from pathlib import Path
+from collections import OrderedDict
+from functools import lru_cache
+from math import isfinite
+
+import numpy as np
+from sklearn.neighbors import BallTree
 import threading
 import time
 
@@ -9,7 +15,7 @@ from flask import Flask, jsonify, render_template, request
 
 from algorithms.graph import RoadGraph, RoadEdge
 from algorithms.routing import astar, dijkstra
-from machine_learning.predict_time import predict_edge_seconds
+from machine_learning.predict_time import load_model, make_predictor
 
 
 # --------------------------------------------------
@@ -32,6 +38,36 @@ graph_loading = False
 
 graph_state_lock = threading.Lock()
 graph_build_lock = threading.Lock()
+nearest_index_lock = threading.Lock()
+route_cache_lock = threading.RLock()
+route_locks = [threading.Lock() for _ in range(64)]
+route_cache = OrderedDict()
+ROUTE_CACHE_SIZE = 256
+route_cache_version = None
+route_cache_generation = 0
+loaded_graph_stamp = None
+
+
+def graph_file_stamp():
+    if not GRAPH_FILE.exists():
+        return None
+    stat = GRAPH_FILE.stat()
+    return stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size
+
+
+def graph_is_current():
+    return road_graph is not None and loaded_graph_stamp == graph_file_stamp()
+
+
+def invalidate_route_cache():
+    """Clear response/nearest caches; graph and model reloads also version keys."""
+    global route_cache_version, route_cache_generation
+    with route_cache_lock:
+        route_cache.clear()
+        route_cache_version = None
+        route_cache_generation += 1
+    _nearest_node_cached.cache_clear()
+
 
 # Ahmedabad urban-area bounding box
 # Format: west, south, east, north
@@ -90,7 +126,8 @@ def build_custom_graph(source_graph):
             target=target,
             length_m=length,
             road_type=str(highway),
-            coordinates=coordinates
+            coordinates=coordinates,
+            edge_id=(source, target, key)
         )
 
         custom.add_edge(source, edge)
@@ -107,16 +144,19 @@ def load_road_graph():
     global road_graph
     global osm_graph
     global graph_error
+    global loaded_graph_stamp
 
-    if road_graph is not None:
+    if graph_is_current():
         return road_graph
 
     with graph_build_lock:
 
-        if road_graph is not None:
+        if graph_is_current():
             return road_graph
 
+        loading_started = time.perf_counter()
         try:
+            source_stamp = None
 
             ox.settings.use_cache = True
             ox.settings.timeout = 180
@@ -130,6 +170,7 @@ def load_road_graph():
 
                 print("\nLoading cached Ahmedabad road network...")
 
+                source_stamp = graph_file_stamp()
                 source_graph = ox.load_graphml(GRAPH_FILE)
 
             else:
@@ -189,14 +230,18 @@ def load_road_graph():
                     source_graph,
                     GRAPH_FILE
                 )
+                source_stamp = graph_file_stamp()
 
             # --------------------------------------
             # CREATE OUR OWN GRAPH STRUCTURE
             # --------------------------------------
 
+            custom = build_custom_graph(source_graph)
+            prepare_nearest_index(custom)
             osm_graph = source_graph
-
-            road_graph = build_custom_graph(source_graph)
+            loaded_graph_stamp = source_stamp
+            road_graph = custom
+            invalidate_route_cache()
 
             graph_error = None
 
@@ -229,6 +274,11 @@ def load_road_graph():
 
             raise
 
+        finally:
+            elapsed = time.perf_counter() - loading_started
+            app.logger.info("graph_loading=%.6fs", elapsed)
+            print(f"PERF graph_loading={elapsed:.6f}s", flush=True)
+
 
 # --------------------------------------------------
 # BACKGROUND LOADING
@@ -260,7 +310,7 @@ def start_graph_loading():
 
     with graph_state_lock:
 
-        if road_graph is not None:
+        if graph_is_current():
             return
 
         if graph_loading:
@@ -344,17 +394,25 @@ def geocode(query):
 # FIND NEAREST ROAD INTERSECTION
 # --------------------------------------------------
 
+def prepare_nearest_index(graph):
+    # Same haversine BallTree and node order as OSMnx, built once per graph.
+    with nearest_index_lock:
+        if graph._nearest_index is None:
+            nodes = tuple(graph.coordinates)
+            radians = np.deg2rad([graph.coordinates[node] for node in nodes])
+            graph._nearest_index = (nodes, BallTree(radians, metric="haversine"))
+    return graph._nearest_index
+
+
+@lru_cache(maxsize=4096)
+def _nearest_node_cached(graph, revision, lat, lon):
+    nodes, tree = prepare_nearest_index(graph)
+    _, positions = tree.query(np.deg2rad([[lat, lon]]), k=1)
+    return int(nodes[positions[0, 0]])
+
+
 def nearest_node(graph, lat, lon):
-
-    return ox.distance.nearest_nodes(
-
-        osm_graph,
-
-        X=float(lon),
-
-        Y=float(lat)
-
-    )
+    return _nearest_node_cached(graph, graph.revision, float(lat), float(lon))
 
 
 # --------------------------------------------------
@@ -386,13 +444,8 @@ def edge_for_pair(graph, source, target):
 # ML TRAVEL-TIME PREDICTION
 # --------------------------------------------------
 
-def make_predicted_time(hour, weekend):
-
-    return lambda edge: predict_edge_seconds(
-        edge,
-        hour,
-        weekend
-    )
+def make_predicted_time(hour, weekend, model=None):
+    return make_predictor(hour, weekend, model)
 
 
 # --------------------------------------------------
@@ -400,21 +453,18 @@ def make_predicted_time(hour, weekend):
 # --------------------------------------------------
 
 
-def build_route(path):
+def build_route(path, edges=None, graph=None):
+
+    graph = road_graph if graph is None else graph
 
     coordinates = []
     total_distance = 0.0
 
-    for index in range(len(path) - 1):
+    if edges is None:
+        edges = [edge_for_pair(graph, source, target)
+                 for source, target in zip(path, path[1:])]
 
-        source = path[index]
-        target = path[index + 1]
-
-        edge = edge_for_pair(
-            road_graph,
-            source,
-            target
-        )
+    for edge in edges:
 
         if edge is None:
             continue
@@ -457,9 +507,9 @@ def build_route(path):
 
     if len(coordinates) < 2:
         coordinates = [
-            list(road_graph.coordinates[node])
+            list(graph.coordinates[node])
             for node in path
-            if node in road_graph.coordinates
+            if node in graph.coordinates
         ]
 
     return coordinates, total_distance
@@ -558,188 +608,109 @@ def status():
 # ROUTE CALCULATION API
 # --------------------------------------------------
 
+def timed_response(body, timings, cache_hit=False, status_code=200):
+    started = time.perf_counter()
+    response = app.response_class(body, status=status_code, mimetype="application/json")
+    timings["response_preparation"] += time.perf_counter() - started
+    response.headers["Server-Timing"] = ", ".join(
+        f"{stage};dur={seconds * 1000:.3f}" for stage, seconds in timings.items()
+    ) + f', route_cache;desc="{"hit" if cache_hit else "miss"}"'
+    app.logger.info("route_cache=%s %s", "hit" if cache_hit else "miss", timings)
+    return response
+
+
 @app.route("/api/route", methods=["POST"])
 def calculate_route():
-
+    global route_cache_version, route_cache_generation
     payload = request.get_json(silent=True) or {}
-
+    timings = dict.fromkeys(("graph_loading", "nearest_lookup", "distance_routing",
+                            "time_routing", "response_preparation"), 0.0)
     try:
-
-        start = payload["start"]
-
-        end = payload["end"]
-
+        start, end = payload["start"], payload["end"]
         hour = int(payload.get("hour", 9))
-
         weekend = int(payload.get("weekend", 0))
-
-        mode = payload.get(
-            "mode",
-            "distance"
-        )
-
-        algorithm = payload.get(
-            "algorithm",
-            "astar"
-        )
-
+        mode = payload.get("mode", "distance")
+        algorithm = payload.get("algorithm", "astar")
         if mode not in ("distance", "time"):
-
-            return jsonify({
-                "error": "Invalid optimization mode."
-            }), 400
-
+            return jsonify({"error": "Invalid optimization mode."}), 400
         if algorithm not in ("astar", "dijkstra"):
+            return jsonify({"error": "Invalid algorithm."}), 400
+        points = tuple(float(value) for value in
+                       (start["lat"], start["lon"], end["lat"], end["lon"]))
+        if not all(isfinite(value) for value in points):
+            return jsonify({"error": "Invalid coordinates."}), 400
 
-            return jsonify({
-                "error": "Invalid algorithm."
-            }), 400
-
-        # Start background download if necessary
-        if road_graph is None:
-
+        started = time.perf_counter()
+        if not graph_is_current():
             start_graph_loading()
-
-            return jsonify({
-
+            timings["graph_loading"] = time.perf_counter() - started
+            return timed_response(app.json.dumps({
                 "loading": True,
+                "message": "Preparing Ahmedabad road network. Please wait."
+            }), timings, status_code=202)
+        graph = road_graph  # Keep one graph/model snapshot for this entire request.
+        timings["graph_loading"] = time.perf_counter() - started
+        model = load_model()
+        version = (graph, graph.revision, model)
+        with route_cache_lock:
+            if route_cache_version != version:
+                route_cache.clear()
+                route_cache_version = version
+                route_cache_generation += 1
+            generation = route_cache_generation
+        key = (version, generation, points, algorithm, mode, hour, weekend)
 
-                "message": (
-                    "Preparing Ahmedabad road network. "
-                    "Please wait."
-                )
+        # Identical simultaneous requests share the completed result.
+        with route_locks[hash(key) % len(route_locks)]:
+            with route_cache_lock:
+                body = route_cache.get(key)
+                if body is not None:
+                    route_cache.move_to_end(key)
+            if body is not None:
+                return timed_response(body, timings, cache_hit=True)
 
-            }), 202
+            started = time.perf_counter()
+            start_node = nearest_node(graph, *points[:2])
+            end_node = nearest_node(graph, *points[2:])
+            timings["nearest_lookup"] = time.perf_counter() - started
+            predictor = make_predicted_time(hour, weekend, model)
+            search_algorithm = astar if algorithm == "astar" else dijkstra
+            edges = []
+            started = time.perf_counter()
+            path, _ = search_algorithm(graph, start_node, end_node, mode, predictor,
+                                       path_edges=edges)
+            timings[f"{mode}_routing"] = time.perf_counter() - started
+            if not path:
+                return timed_response(app.json.dumps({
+                    "error": "No connected road route found. Try different locations."
+                }), timings, status_code=404)
 
-        # Find nearest road intersections
-        start_node = nearest_node(
-
-            road_graph,
-
-            start["lat"],
-
-            start["lon"]
-
-        )
-
-        end_node = nearest_node(
-
-            road_graph,
-
-            end["lat"],
-
-            end["lon"]
-
-        )
-
-        predictor = make_predicted_time(
-            hour,
-            weekend
-        )
-
-        # Select algorithm
-        search_algorithm = (
-
-            astar
-
-            if algorithm == "astar"
-
-            else dijkstra
-
-        )
-
-        # Calculate route
-        path, _ = search_algorithm(
-
-            road_graph,
-
-            start_node,
-
-            end_node,
-
-            mode,
-
-            predictor
-
-        )
-
-        if not path:
-
-            return jsonify({
-
-                "error": (
-                    "No connected road route found. "
-                    "Try different locations."
-                )
-
-            }), 404
-
-        # Get route geometry and distance
-        coordinates, distance_m = build_route(path)
-
-        # Calculate estimated travel time
-        estimated_seconds = 0.0
-
-        for index in range(len(path) - 1):
-
-            edge = edge_for_pair(
-
-                road_graph,
-
-                path[index],
-
-                path[index + 1]
-
-            )
-
-            if edge is not None:
-
-                estimated_seconds += predictor(edge)
-
-        if len(coordinates) < 2:
-
-            return jsonify({
-
-                "error": "Route geometry could not be generated."
-
-            }), 500
-
-        return jsonify({
-
-            "coordinates": coordinates,
-
-            "distance_km": round(
-                distance_m / 1000,
-                2
-            ),
-
-            "estimated_minutes": round(
-                estimated_seconds / 60,
-                1
-            ),
-
-            "nodes": len(path),
-
-            "algorithm": algorithm,
-
-            "mode": mode,
-
-            "note": (
-                "Travel time is estimated using synthetic ML training "
-                "data, not live traffic."
-            )
-
-        })
-
+            started = time.perf_counter()
+            coordinates, distance_m = build_route(path, edges, graph)
+            estimated_seconds = sum(predictor(edge) for edge in edges)
+            if len(coordinates) < 2:
+                return timed_response(app.json.dumps({
+                    "error": "Route geometry could not be generated."
+                }), timings, status_code=500)
+            body = app.json.dumps({
+                "coordinates": coordinates,
+                "distance_km": round(distance_m / 1000, 2),
+                "estimated_minutes": round(estimated_seconds / 60, 1),
+                "nodes": len(path), "algorithm": algorithm, "mode": mode,
+                "note": "Travel time is estimated using synthetic ML training data, not live traffic."
+            })
+            timings["response_preparation"] = time.perf_counter() - started
+            with route_cache_lock:
+                # A reload/invalidation during calculation must not repopulate old entries.
+                if route_cache_version == version and route_cache_generation == generation:
+                    route_cache[key] = body
+                    route_cache.move_to_end(key)
+                    if len(route_cache) > ROUTE_CACHE_SIZE:
+                        route_cache.popitem(last=False)
+            return timed_response(body, timings)
     except Exception as error:
-
         print("\nROUTE CALCULATION ERROR:", error)
-
-        return jsonify({
-
-            "error": str(error)
-
-        }), 500
+        return jsonify({"error": str(error)}), 500
 
 
 # --------------------------------------------------

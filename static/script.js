@@ -11,7 +11,9 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 let startPlace = null;
 let endPlace = null;
-let routeLayer = null;
+let routeLayers = [];
+let routeGeneration = 0;
+let routeController = null;
 let startMarker = null;
 let endMarker = null;
 
@@ -32,12 +34,16 @@ function markerIcon(color) {
 }
 
 function clearRoute() {
-  if (routeLayer) {
-    map.removeLayer(routeLayer);
-    routeLayer = null;
-  }
-
+  routeGeneration++;
+  routeController?.abort();
+  routeController = null;
+  routeLayers.forEach(layer => map.removeLayer(layer));
+  routeLayers = [];
   $('routeSummary').classList.add('hidden');
+  $('routeSummary').querySelectorAll('strong, .tag, .route-note').forEach(el => { el.textContent = ''; });
+  $('mapLoading').classList.add('hidden');
+  $('routeButton').disabled = false;
+  setMessage('Select locations, then find both routes.');
 }
 
 function updateMarkers() {
@@ -183,18 +189,20 @@ attachSearch('startSearch', 'startResults', 'start');
 attachSearch('endSearch', 'endResults', 'end');
 
 async function resolveDefaults() {
+  const initialStart = $('startSearch').value;
+  const initialEnd = $('endSearch').value;
   try {
     const [a, b] = await Promise.all([
       search('Sabarmati Ashram'),
       search('Kankaria Lake')
     ]);
 
-    if (a.length) {
+    if (a.length && $('startSearch').value === initialStart && !startPlace) {
       startPlace = a[0];
       $('startSearch').value = a[0].name;
     }
 
-    if (b.length) {
+    if (b.length && $('endSearch').value === initialEnd && !endPlace) {
       endPlace = b[0];
       $('endSearch').value = b[0].name;
     }
@@ -210,13 +218,14 @@ async function resolveDefaults() {
   }
 }
 
-async function requestRoute(payload) {
+async function requestRoute(payload, signal) {
 
   // Handle HTTP 202 while the road network is loading.
   for (let attempt = 0; attempt < 120; attempt++) {
 
     const response = await fetch('/api/route', {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json'
       },
@@ -230,7 +239,12 @@ async function requestRoute(payload) {
         data.message || 'Loading Ahmedabad road network…'
       );
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve, reject) => {
+        const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+        const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, 2000);
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
       continue;
     }
 
@@ -270,131 +284,70 @@ function getValidCoordinates(rawCoordinates) {
     ]);
 }
 
-async function calculate(modeOverride = null) {
-
+async function calculate() {
+  clearRoute();
   if (!startPlace || !endPlace) {
-    setMessage(
-      'Select both locations from the search suggestions first.',
-      true
-    );
-    return null;
+    setMessage('Select both locations from the search suggestions first.', true);
+    return;
   }
-
+  const generation = routeGeneration;
+  const controller = new AbortController();
+  routeController = controller;
   $('mapLoading').classList.remove('hidden');
   $('routeButton').disabled = true;
-
-  // Remove the previous route.
-  clearRoute();
-
-  setMessage('Calculating the route…');
-
+  setMessage('Calculating distance-optimized and time-optimized routes...');
+  const payload = {
+    start: startPlace, end: endPlace, algorithm: $('algorithm').value,
+    hour: Number($('hour').value), weekend: Number($('day').value)
+  };
   try {
-
-    const payload = {
-      start: startPlace,
-      end: endPlace,
-      algorithm: $('algorithm').value,
-      mode: modeOverride || $('mode').value,
-      hour: Number($('hour').value),
-      weekend: Number($('day').value)
-    };
-
-    const data = await requestRoute(payload);
-
-    const coordinates = getValidCoordinates(
-      data.coordinates
-    );
-
-    if (coordinates.length < 2) {
-      throw new Error(
-        'Invalid route coordinates received. Please try another location.'
-      );
-    }
-
-    // Ensure only one route layer exists.
-    clearRoute();
-
-    routeLayer = L.polyline(coordinates, {
-      color: '#2864ed',
-      weight: 6,
-      opacity: 0.95,
-      lineCap: 'round',
-      lineJoin: 'round'
-    }).addTo(map);
-
-    // Refresh map dimensions before fitting the route.
-    map.invalidateSize();
-
-    const bounds = routeLayer.getBounds();
-
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, {
-        padding: [65, 65]
-      });
-    }
-
-    $('distance').textContent =
-      `${data.distance_km} km`;
-
-    $('duration').textContent =
-      `${data.estimated_minutes} min`;
-
-    $('algoTag').textContent =
-      $('algorithm').value === 'astar'
-        ? 'A* Search'
-        : 'Dijkstra';
-
-    $('routeNote').textContent = data.note || '';
-
+    const modes = ['distance', 'time'];
+    const routes = await Promise.all(modes.map(mode => requestRoute({ ...payload, mode }, controller.signal)));
+    if (generation !== routeGeneration) return;
+    const points = routes.map(route => getValidCoordinates(route.coordinates));
+    if (points.some(coords => coords.length < 2)) throw new Error('Invalid route coordinates received. Please try another location.');
+    routes.forEach((data, index) => {
+      const mode = modes[index];
+      routeLayers.push(L.polyline(points[index], {
+        color: index === 0 ? '#2864ed' : '#159957',
+        weight: index === 0 ? 8 : 4, opacity: 0.95,
+        dashArray: index === 1 ? '10 8' : null,
+        lineCap: 'round', lineJoin: 'round'
+      }).addTo(map));
+      $(mode + 'Distance').textContent = data.distance_km + ' km';
+      $(mode + 'Duration').textContent = data.estimated_minutes + ' min';
+      $(mode + 'Algo').textContent = payload.algorithm === 'astar' ? 'A* Search' : 'Dijkstra';
+      $(mode + 'Note').textContent = data.note || '';
+    });
     $('routeSummary').classList.remove('hidden');
-
-    $('networkStatus').textContent =
-      'Ahmedabad road network loaded';
-
-    setMessage(
-      `Route found across ${Number(data.nodes).toLocaleString()} road intersections.`
-    );
-
-    setTimeout(() => map.invalidateSize(), 200);
-
-    return data;
-
+    $('networkStatus').textContent = 'Ahmedabad road network loaded';
+    setMessage('Both routes calculated. Shared segments show dashed green over blue.');
+    requestAnimationFrame(() => {
+      if (generation !== routeGeneration) return;
+      map.invalidateSize({ pan: false });
+      map.fitBounds(L.latLngBounds(points.flat()), { padding: [40, 40], animate: false });
+    });
   } catch (error) {
-
+    if (generation !== routeGeneration) return;
     clearRoute();
-    setMessage(error.message, true);
-
-    return null;
-
+    setMessage(error.message || 'Route calculation failed', true);
   } finally {
-
-    $('mapLoading').classList.add('hidden');
-    $('routeButton').disabled = false;
-
+    if (generation === routeGeneration) {
+      $('mapLoading').classList.add('hidden');
+      $('routeButton').disabled = false;
+      routeController = null;
+    }
   }
 }
 
-$('routeButton').addEventListener('click', () => {
-  calculate();
+$('routeButton').addEventListener('click', calculate);
+['algorithm', 'hour', 'day'].forEach(id => $(id).addEventListener('change', clearRoute));
+
+// Leaflet must measure its container after grid/layout changes, not only window resizes.
+const mapResizeObserver = new ResizeObserver(() => {
+  requestAnimationFrame(() => map.invalidateSize({ pan: false }));
 });
-
-$('compareButton').addEventListener('click', async () => {
-
-  const distanceRoute = await calculate('distance');
-
-  if (!distanceRoute) return;
-
-  const timeRoute = await calculate('time');
-
-  if (!timeRoute) return;
-
-  setMessage(
-    `Distance-optimized: ${distanceRoute.distance_km} km / ${distanceRoute.estimated_minutes} min. ` +
-    `Time-optimized: ${timeRoute.distance_km} km / ${timeRoute.estimated_minutes} min. ` +
-    'The time-optimized route is shown on the map.'
-  );
-
-});
+mapResizeObserver.observe($('map'));
 
 fetch('/api/status')
   .then(response => response.json())
