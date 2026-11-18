@@ -37,7 +37,7 @@ app = Flask(
     __name__,
     template_folder=str(PUBLIC_DIR),
     static_folder=str(PUBLIC_DIR),
-    static_url_path="/Public",
+    static_url_path="/public",
 )
 
 road_graph = None
