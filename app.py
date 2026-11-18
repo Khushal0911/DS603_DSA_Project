@@ -23,12 +23,22 @@ from machine_learning.predict_time import load_model, make_predictor
 # --------------------------------------------------
 
 BASE = Path(__file__).resolve().parent
-DATA_DIR = BASE / "data"
+DATA_DIR = (
+    Path("/tmp/smartroute-data")
+    if os.environ.get("VERCEL")
+    else BASE / "data"
+)
 GRAPH_FILE = DATA_DIR / "ahmedabad_drive.graphml"
 
 DATA_DIR.mkdir(exist_ok=True)
 
-app = Flask(__name__)
+PUBLIC_DIR = BASE / "Public"
+app = Flask(
+    __name__,
+    template_folder=str(PUBLIC_DIR),
+    static_folder=str(PUBLIC_DIR),
+    static_url_path="/Public",
+)
 
 road_graph = None
 osm_graph = None
