@@ -577,6 +577,12 @@ def search_places():
 @app.route("/api/status")
 def status():
 
+    # Start warming the cached road graph as soon as the UI opens.  Previously
+    # this work began only after the user clicked Find Route, which made the
+    # first result appear unnecessarily slow.
+    if road_graph is None and not graph_loading and graph_error is None:
+        start_graph_loading()
+
     with graph_state_lock:
 
         loading = graph_loading

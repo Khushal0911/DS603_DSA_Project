@@ -241,7 +241,7 @@ async function requestRoute(payload, signal) {
 
       await new Promise((resolve, reject) => {
         const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
-        const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, 2000);
+        const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, 500);
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) onAbort();
       });
