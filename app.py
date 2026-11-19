@@ -32,7 +32,10 @@ GRAPH_FILE = DATA_DIR / "ahmedabad_drive.graphml"
 
 DATA_DIR.mkdir(exist_ok=True)
 
-PUBLIC_DIR = BASE / "Public"
+# Keep this path aligned with the tracked directory name.  This is
+# case-sensitive on Linux (including Vercel), even though it appears to work
+# locally on Windows when written as ``Public``.
+PUBLIC_DIR = BASE / "public"
 app = Flask(
     __name__,
     template_folder=str(PUBLIC_DIR),
