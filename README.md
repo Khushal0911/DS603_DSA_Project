@@ -21,7 +21,7 @@ Open CMD in the folder containing `app.py`, then run:
 py -3.13 -m venv venv
 venv\Scripts\activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 python machine_learning\train_model.py
 python app.py
 ```

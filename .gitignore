@@ -1,5 +1,5 @@
 venv/
-.venv/
 __pycache__/
 *.py[cod]
+machine_learning/*.joblib
 .DS_Store

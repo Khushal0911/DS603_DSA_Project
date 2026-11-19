@@ -5,13 +5,12 @@ from functools import lru_cache
 from math import isfinite
 
 import numpy as np
-import networkx as nx
 from sklearn.neighbors import BallTree
 import threading
 import time
 
-import os
 import requests
+import osmnx as ox
 from flask import Flask, jsonify, render_template, request
 
 from algorithms.graph import RoadGraph, RoadEdge
@@ -24,28 +23,12 @@ from machine_learning.predict_time import load_model, make_predictor
 # --------------------------------------------------
 
 BASE = Path(__file__).resolve().parent
-PACKAGED_GRAPH_FILE = BASE / "data" / "ahmedabad_drive.graphml"
-RUNTIME_DATA_DIR = Path("/tmp/smartroute-data")
-# Vercel instances have ephemeral /tmp storage. The repository already
-# contains the complete road network, so prefer that immutable deployment
-# asset and only use /tmp as a fallback for a missing local copy.
-GRAPH_FILE = PACKAGED_GRAPH_FILE if PACKAGED_GRAPH_FILE.exists() else RUNTIME_DATA_DIR / "ahmedabad_drive.graphml"
-DATA_DIR = GRAPH_FILE.parent
+DATA_DIR = BASE / "data"
+GRAPH_FILE = DATA_DIR / "ahmedabad_drive.graphml"
 
 DATA_DIR.mkdir(exist_ok=True)
 
-# Keep this path aligned with the tracked directory name.  This is
-# case-sensitive on Linux (including Vercel), even though it appears to work
-# locally on Windows when written as ``Public``.
-PUBLIC_DIR = BASE / "public"
-app = Flask(
-    __name__,
-    template_folder=str(PUBLIC_DIR),
-    static_folder=str(PUBLIC_DIR),
-    # Vercel serves the repository's public/ directory from the site root.
-    # Keep Flask's local static serving aligned with those same asset URLs.
-    static_url_path="",
-)
+app = Flask(__name__)
 
 road_graph = None
 osm_graph = None
@@ -97,21 +80,6 @@ AHMEDABAD_VIEWBOX = "72.45,23.15,72.75,22.90"
 # BUILD CUSTOM ROAD GRAPH
 # --------------------------------------------------
 
-def graphml_geometry_coordinates(geometry):
-    """Convert GraphML WKT geometry to Leaflet [lat, lon] coordinates."""
-    if not isinstance(geometry, str):
-        return None
-    text = geometry.strip()
-    if not text.upper().startswith("LINESTRING"):
-        return None
-    body = text[text.find("(") + 1:text.rfind(")")]
-    coordinates = []
-    for pair in body.split(","):
-        values = pair.strip().split()
-        if len(values) >= 2:
-            coordinates.append([float(values[1]), float(values[0])])
-    return coordinates
-
 def build_custom_graph(source_graph):
 
     custom = RoadGraph()
@@ -140,13 +108,7 @@ def build_custom_graph(source_graph):
 
         geometry = data.get("geometry")
 
-        wkt_coordinates = graphml_geometry_coordinates(geometry)
-
-        if wkt_coordinates is not None:
-
-            coordinates = wkt_coordinates
-
-        elif geometry is not None:
+        if geometry is not None:
 
             coordinates = [
                 [float(lat), float(lon)]
@@ -196,6 +158,10 @@ def load_road_graph():
         try:
             source_stamp = None
 
+            ox.settings.use_cache = True
+            ox.settings.timeout = 180
+            ox.settings.log_console = True
+
             # --------------------------------------
             # LOAD EXISTING GRAPH
             # --------------------------------------
@@ -205,7 +171,7 @@ def load_road_graph():
                 print("\nLoading cached Ahmedabad road network...")
 
                 source_stamp = graph_file_stamp()
-                source_graph = nx.read_graphml(GRAPH_FILE, node_type=int)
+                source_graph = ox.load_graphml(GRAPH_FILE)
 
             else:
 
@@ -213,18 +179,6 @@ def load_road_graph():
                 # DOWNLOAD WITH EXPONENTIAL BACKOFF
                 # ----------------------------------
 
-                # OSMnx is a development/download dependency. Production
-                # deployments include the complete GraphML asset above.
-                try:
-                    import osmnx as ox
-                except ImportError as error:
-                    raise RuntimeError(
-                        "Packaged road network is missing and OSMnx is not installed."
-                    ) from error
-
-                ox.settings.use_cache = True
-                ox.settings.timeout = 180
-                ox.settings.log_console = True
                 source_graph = None
 
                 for attempt in range(5):
@@ -609,21 +563,6 @@ def search_places():
 @app.route("/api/status")
 def status():
 
-    # Start warming the cached road graph as soon as the UI opens.  Previously
-    # this work began only after the user clicked Find Route, which made the
-    # first result appear unnecessarily slow.
-    if road_graph is None and not graph_loading and graph_error is None:
-        # A daemon thread can be stopped when a serverless invocation ends.
-        # Load the packaged graph inside the request so status is truthful and
-        # the next route request never waits on work from a dead invocation.
-        if os.environ.get("VERCEL"):
-            try:
-                load_road_graph()
-            except Exception:
-                pass
-        else:
-            start_graph_loading()
-
     with graph_state_lock:
 
         loading = graph_loading
@@ -703,15 +642,12 @@ def calculate_route():
 
         started = time.perf_counter()
         if not graph_is_current():
-            if os.environ.get("VERCEL"):
-                load_road_graph()
-            else:
-                start_graph_loading()
-                timings["graph_loading"] = time.perf_counter() - started
-                return timed_response(app.json.dumps({
-                    "loading": True,
-                    "message": "Preparing Ahmedabad road network. Please wait."
-                }), timings, status_code=202)
+            start_graph_loading()
+            timings["graph_loading"] = time.perf_counter() - started
+            return timed_response(app.json.dumps({
+                "loading": True,
+                "message": "Preparing Ahmedabad road network. Please wait."
+            }), timings, status_code=202)
         graph = road_graph  # Keep one graph/model snapshot for this entire request.
         timings["graph_loading"] = time.perf_counter() - started
         model = load_model()

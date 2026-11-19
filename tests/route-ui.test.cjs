@@ -18,7 +18,7 @@ function setup() {
     const payload=JSON.parse(options.body); requests.push(payload);
     return {ok:true,status:200,json:async()=>({coordinates:[[23,72],[23.1,72.1]],distance_km:payload.mode==='distance'?2:3,estimated_minutes:payload.mode==='distance'?8:6,note:'ML estimate'})};
   }});
-  vm.runInContext(fs.readFileSync('public/script.js','utf8'),ctx);
+  vm.runInContext(fs.readFileSync('static/script.js','utf8'),ctx);
   vm.runInContext('startPlace={lat:23,lon:72};endPlace={lat:23.1,lon:72.1};',ctx);
   return {ctx,el,layers,requests,counts:()=>({refreshes,fits})};
 }
