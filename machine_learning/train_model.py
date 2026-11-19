@@ -1,11 +1,6 @@
 """Train a demonstration travel-time model (synthetic labels, not live traffic)."""
 from pathlib import Path
 import os
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error
 import joblib
 
 BASE = Path(__file__).resolve().parent
@@ -24,6 +19,12 @@ def road_code(road_type):
 
 
 def train():
+    import numpy as np
+    import pandas as pd
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_absolute_error
+
     rng = np.random.default_rng(42)
     rows = []
     road_speeds = [90, 70, 50, 40, 35, 25, 25, 15, 25]

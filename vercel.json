@@ -1,21 +1,27 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "version": 2,
-  "builds": [
-    {
-      "src": "app.py",
-      "use": "@vercel/python",
-      "config": {
-        "runtime": "python3.12",
-        "maxDuration": 300,
-        "includeFiles": [
-          "data/ahmedabad_drive.graphml",
-          "machine_learning/travel_time_model.joblib",
-          "public/**"
-        ]
-      }
+  "functions": {
+    "app.py": {
+      "maxDuration": 300,
+      "includeFiles": [
+        "data/ahmedabad_drive.graphml",
+        "machine_learning/travel_time_model.joblib",
+        "public/**"
+      ],
+      "excludeFiles": [
+        "cache/**",
+        "tests/**",
+        "benchmarks/**",
+        "**/*.test.cjs",
+        "**/*.test.py",
+        "**/test_*.py",
+        "data/synthetic_travel_data.csv",
+        "**/*.md",
+        ".venv/**",
+        "venv/**"
+      ]
     }
-  ],
+  },
   "routes": [
     {
       "src": "/(.*)",

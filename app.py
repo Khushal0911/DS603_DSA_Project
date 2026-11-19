@@ -5,13 +5,13 @@ from functools import lru_cache
 from math import isfinite
 
 import numpy as np
+import networkx as nx
 from sklearn.neighbors import BallTree
 import threading
 import time
 
 import os
 import requests
-import osmnx as ox
 from flask import Flask, jsonify, render_template, request
 
 from algorithms.graph import RoadGraph, RoadEdge
@@ -95,6 +95,21 @@ AHMEDABAD_VIEWBOX = "72.45,23.15,72.75,22.90"
 # BUILD CUSTOM ROAD GRAPH
 # --------------------------------------------------
 
+def graphml_geometry_coordinates(geometry):
+    """Convert GraphML WKT geometry to Leaflet [lat, lon] coordinates."""
+    if not isinstance(geometry, str):
+        return None
+    text = geometry.strip()
+    if not text.upper().startswith("LINESTRING"):
+        return None
+    body = text[text.find("(") + 1:text.rfind(")")]
+    coordinates = []
+    for pair in body.split(","):
+        values = pair.strip().split()
+        if len(values) >= 2:
+            coordinates.append([float(values[1]), float(values[0])])
+    return coordinates
+
 def build_custom_graph(source_graph):
 
     custom = RoadGraph()
@@ -123,7 +138,13 @@ def build_custom_graph(source_graph):
 
         geometry = data.get("geometry")
 
-        if geometry is not None:
+        wkt_coordinates = graphml_geometry_coordinates(geometry)
+
+        if wkt_coordinates is not None:
+
+            coordinates = wkt_coordinates
+
+        elif geometry is not None:
 
             coordinates = [
                 [float(lat), float(lon)]
@@ -173,10 +194,6 @@ def load_road_graph():
         try:
             source_stamp = None
 
-            ox.settings.use_cache = True
-            ox.settings.timeout = 180
-            ox.settings.log_console = True
-
             # --------------------------------------
             # LOAD EXISTING GRAPH
             # --------------------------------------
@@ -186,7 +203,7 @@ def load_road_graph():
                 print("\nLoading cached Ahmedabad road network...")
 
                 source_stamp = graph_file_stamp()
-                source_graph = ox.load_graphml(GRAPH_FILE)
+                source_graph = nx.read_graphml(GRAPH_FILE, node_type=int)
 
             else:
 
@@ -194,6 +211,18 @@ def load_road_graph():
                 # DOWNLOAD WITH EXPONENTIAL BACKOFF
                 # ----------------------------------
 
+                # OSMnx is a development/download dependency. Production
+                # deployments include the complete GraphML asset above.
+                try:
+                    import osmnx as ox
+                except ImportError as error:
+                    raise RuntimeError(
+                        "Packaged road network is missing and OSMnx is not installed."
+                    ) from error
+
+                ox.settings.use_cache = True
+                ox.settings.timeout = 180
+                ox.settings.log_console = True
                 source_graph = None
 
                 for attempt in range(5):
