@@ -3,23 +3,8 @@
   "functions": {
     "app.py": {
       "maxDuration": 300,
-      "includeFiles": [
-        "data/ahmedabad_drive.graphml",
-        "machine_learning/travel_time_model.joblib",
-        "public/**"
-      ],
-      "excludeFiles": [
-        "cache/**",
-        "tests/**",
-        "benchmarks/**",
-        "**/*.test.cjs",
-        "**/*.test.py",
-        "**/test_*.py",
-        "data/synthetic_travel_data.csv",
-        "**/*.md",
-        ".venv/**",
-        "venv/**"
-      ]
+      "includeFiles": "{data/ahmedabad_drive.graphml,machine_learning/travel_time_model.joblib,public/**}",
+      "excludeFiles": "{cache/**,tests/**,benchmarks/**,**/*.test.cjs,**/*.test.py,**/test_*.py,data/synthetic_travel_data.csv,**/*.md,.venv/**,venv/**}"
     }
   },
   "routes": [
