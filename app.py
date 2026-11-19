@@ -42,7 +42,9 @@ app = Flask(
     __name__,
     template_folder=str(PUBLIC_DIR),
     static_folder=str(PUBLIC_DIR),
-    static_url_path="/public",
+    # Vercel serves the repository's public/ directory from the site root.
+    # Keep Flask's local static serving aligned with those same asset URLs.
+    static_url_path="",
 )
 
 road_graph = None
