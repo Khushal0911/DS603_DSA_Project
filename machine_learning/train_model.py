@@ -1,5 +1,6 @@
 """Train a demonstration travel-time model (synthetic labels, not live traffic)."""
 from pathlib import Path
+import os
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
@@ -8,7 +9,11 @@ from sklearn.metrics import mean_absolute_error
 import joblib
 
 BASE = Path(__file__).resolve().parent
-MODEL_PATH = BASE / "travel_time_model.joblib"
+MODEL_PATH = (
+    Path("/tmp/smartroute-travel_time_model.joblib")
+    if os.environ.get("VERCEL")
+    else BASE / "travel_time_model.joblib"
+)
 ROAD_CODES = {"motorway": 0, "trunk": 1, "primary": 2, "secondary": 3,
               "tertiary": 4, "residential": 5, "unclassified": 6, "service": 7,
               "other": 8}

@@ -9,6 +9,7 @@ from sklearn.neighbors import BallTree
 import threading
 import time
 
+import os
 import requests
 import osmnx as ox
 from flask import Flask, jsonify, render_template, request
