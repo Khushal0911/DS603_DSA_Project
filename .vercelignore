@@ -1,0 +1,9 @@
+cache/
+tests/
+benchmarks/
+data/synthetic_travel_data.csv
+data/README.txt
+requirements-dev.txt
+README.md
+.venv/
+venv/
