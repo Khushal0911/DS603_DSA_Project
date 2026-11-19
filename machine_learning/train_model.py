@@ -9,11 +9,11 @@ from sklearn.metrics import mean_absolute_error
 import joblib
 
 BASE = Path(__file__).resolve().parent
-MODEL_PATH = (
-    Path("/tmp/smartroute-travel_time_model.joblib")
-    if os.environ.get("VERCEL")
-    else BASE / "travel_time_model.joblib"
-)
+PACKAGED_MODEL_PATH = BASE / "travel_time_model.joblib"
+RUNTIME_MODEL_PATH = Path("/tmp/smartroute-travel_time_model.joblib")
+# The trained model is deployed as a read-only asset. /tmp remains available
+# only for development/recovery when the packaged artifact is absent.
+MODEL_PATH = PACKAGED_MODEL_PATH if PACKAGED_MODEL_PATH.exists() else RUNTIME_MODEL_PATH
 ROAD_CODES = {"motorway": 0, "trunk": 1, "primary": 2, "secondary": 3,
               "tertiary": 4, "residential": 5, "unclassified": 6, "service": 7,
               "other": 8}

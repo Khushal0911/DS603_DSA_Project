@@ -24,12 +24,13 @@ from machine_learning.predict_time import load_model, make_predictor
 # --------------------------------------------------
 
 BASE = Path(__file__).resolve().parent
-DATA_DIR = (
-    Path("/tmp/smartroute-data")
-    if os.environ.get("VERCEL")
-    else BASE / "data"
-)
-GRAPH_FILE = DATA_DIR / "ahmedabad_drive.graphml"
+PACKAGED_GRAPH_FILE = BASE / "data" / "ahmedabad_drive.graphml"
+RUNTIME_DATA_DIR = Path("/tmp/smartroute-data")
+# Vercel instances have ephemeral /tmp storage. The repository already
+# contains the complete road network, so prefer that immutable deployment
+# asset and only use /tmp as a fallback for a missing local copy.
+GRAPH_FILE = PACKAGED_GRAPH_FILE if PACKAGED_GRAPH_FILE.exists() else RUNTIME_DATA_DIR / "ahmedabad_drive.graphml"
+DATA_DIR = GRAPH_FILE.parent
 
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -581,7 +582,16 @@ def status():
     # this work began only after the user clicked Find Route, which made the
     # first result appear unnecessarily slow.
     if road_graph is None and not graph_loading and graph_error is None:
-        start_graph_loading()
+        # A daemon thread can be stopped when a serverless invocation ends.
+        # Load the packaged graph inside the request so status is truthful and
+        # the next route request never waits on work from a dead invocation.
+        if os.environ.get("VERCEL"):
+            try:
+                load_road_graph()
+            except Exception:
+                pass
+        else:
+            start_graph_loading()
 
     with graph_state_lock:
 
@@ -662,12 +672,15 @@ def calculate_route():
 
         started = time.perf_counter()
         if not graph_is_current():
-            start_graph_loading()
-            timings["graph_loading"] = time.perf_counter() - started
-            return timed_response(app.json.dumps({
-                "loading": True,
-                "message": "Preparing Ahmedabad road network. Please wait."
-            }), timings, status_code=202)
+            if os.environ.get("VERCEL"):
+                load_road_graph()
+            else:
+                start_graph_loading()
+                timings["graph_loading"] = time.perf_counter() - started
+                return timed_response(app.json.dumps({
+                    "loading": True,
+                    "message": "Preparing Ahmedabad road network. Please wait."
+                }), timings, status_code=202)
         graph = road_graph  # Keep one graph/model snapshot for this entire request.
         timings["graph_loading"] = time.perf_counter() - started
         model = load_model()
